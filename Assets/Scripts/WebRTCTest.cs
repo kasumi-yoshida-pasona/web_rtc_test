@@ -2,21 +2,31 @@ using UnityEngine;
 using Unity.WebRTC;
 using UnityEngine.UI;
 using Cysharp.Threading.Tasks;
+using TMPro;
 
 public class WebRTCTest : MonoBehaviour
 {
-    [SerializeField] Button button;
+    [SerializeField] private Button openBtn;
+    [SerializeField] private Button closeBtn;
+    [SerializeField] private TextMeshProUGUI text;
+    [SerializeField] private TMP_InputField inputField;
+    private RTCDataChannel sendChannel;
+    private RTCDataChannel receiveChannel;
+    private RTCPeerConnection localConnection;
+    private RTCPeerConnection remoteConnection;
 
     void Start()
     {
-        button.onClick.AddListener(() =>
+        OpenBtnAvailable();
+
+        openBtn.onClick.AddListener(() =>
         {
             // ローカルピア作成
-            var localConnection = new RTCPeerConnection();
-            var sendChannel = localConnection.CreateDataChannel("SendChannel");
+            localConnection = new RTCPeerConnection();
+            sendChannel = localConnection.CreateDataChannel("SendChannel");
 
             // リモートピア作成
-            var remoteConnection = new RTCPeerConnection();
+            remoteConnection = new RTCPeerConnection();
             remoteConnection.OnDataChannel = ReceiveChannelCallback;
 
             // 通信経路候補の登録
@@ -36,14 +46,68 @@ public class WebRTCTest : MonoBehaviour
             };
 
             // シグナリング処理
-            HandleSignalingAsync(localConnection, remoteConnection).Forget();
+            HandleSignalingAsync().Forget();
+        });
+
+        closeBtn.onClick.AddListener(() =>
+        {
+            // 終了処理
+            sendChannel.Close();
+            receiveChannel.Close();
+
+            localConnection.Close();
+            remoteConnection.Close();
+
+            OpenBtnAvailable();
+            Debug.Log("Close connection.");
         });
     }
 
-    private void ReceiveChannelCallback(RTCDataChannel channel)
-    { }
+    private void OpenBtnAvailable()
+    {
+        openBtn.interactable = true;
+        closeBtn.interactable = false;
+        text.text = "";
+        inputField.interactable = false;
+    }
 
-    private async UniTask HandleSignalingAsync(RTCPeerConnection localConnection, RTCPeerConnection remoteConnection)
+    private void CloseBtnAvailable()
+    {
+        openBtn.interactable = false;
+        closeBtn.interactable = true;
+        text.text = "";
+        inputField.interactable = true;
+    }
+
+    // ICEの交換終了時に呼び出されるコールバック
+    private void ReceiveChannelCallback(RTCDataChannel channel)
+    {
+        receiveChannel = channel;
+        receiveChannel.OnMessage = OnReceiveMessage;
+
+        CloseBtnAvailable();
+        Debug.Log($"Received DataChannel: {channel.Label}");
+
+        inputField.onEndEdit.AddListener(text =>
+        {
+            if (sendChannel == null)
+            {
+                return;
+            }
+
+            var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            sendChannel.Send(bytes);
+            inputField.text = "";
+        });
+    }
+
+    private void OnReceiveMessage(byte[] bytes)
+    {
+        var message = System.Text.Encoding.UTF8.GetString(bytes);
+        text.text += message;
+    }
+
+    private async UniTask HandleSignalingAsync()
     {
         // オファーSDPの作成
         var offerOptions = localConnection.CreateOffer();
@@ -102,5 +166,11 @@ public class WebRTCTest : MonoBehaviour
         }
 
         Debug.Log("Signaling done.");
+
+        // ICE コネクションの監視
+        localConnection.OnIceConnectionChange = state =>
+        {
+            Debug.Log($"ICE connection state: {state}");
+        };
     }
 }
